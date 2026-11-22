@@ -3,7 +3,7 @@
 #include<string.h>
 #include<dirent.h>
 #include<sys/stat.h>
-#ifdef_WIN32
+#ifdef _WIN32
 #include<windows.h>
 #else
 #include<unistd.h>
@@ -12,25 +12,26 @@
 
 void open_target(const char *target_path)
 {
-    char command_buffer[MAX_PATH_LEN + 64];
+    char command[MAX_PATH_LEN + 64];
     #ifdef _WIN32{
-        snprintf(command_buffer, sizeof(command_buffer), "start\"\"\"%s\"",target_path);
+        snprintf(command, sizeof(command), "start \"\" \"%s\"",target_path);
     }
     #elif __APPLE__{
-        snprintf(command_buffer, sizeof(command_buffer), "open \"%s\"", target_path);
+        snprintf(command, sizeof(command), "open \"%s\"", target_path);
     }
     #else{
-        snprintf(command_buffer, sizeof(command_buffer), "xdg-open \"%s\"", target_path)
+        snprintf(command, sizeof(command), "xdg-open \"%s\"", target_path)
     }
-    #endif
-    printf("[C Core] Executing: %s\n", command_buffer);
-    int result = system(command_buffer);
-    if(result == 0){
+   
+    printf("[C Core] Executing: %s\n", command);
+    int result = system(command);
+        if(result == 0){
         printf("[C Core] Successfully opened: %s\n", target_path);
-    } else {
+        } else {
         printf( "[C Core] Failed to open: %s\n", target_path);
-    }
-}
+        }
+    #endif}
+
 void search_file(const char *base_path, const char *query){
     char path[MAX_PATH_LEN];
     struct dirent *dp;

@@ -2,6 +2,7 @@ require("dotenv").config();
 const { GoogleGenAI } = require("@google/genai");
 const osActions = require("./os_actions");
 const { speak, listen } = require("./voice");
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const tools = [
   {
     functionDeclarations: [
