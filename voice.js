@@ -1,80 +1,100 @@
-const { exec } = require("child_process");
+require("dotenv").config();
+const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const { GoogleGenAI } = require("@google/genai");
 
+if (!process.env.GEMINI_API_KEY) {
+  throw new Error("GEMINI_API_KEY is missing. Add it to the .env file.");
+}
+
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const TEMP_AUDIO = path.join(__dirname, "input.wav");
+const REC_SCRIPT = path.join(__dirname, "test.ps1");
+const TRANSCRIPTION_PROMPT = "Transcribe exactly what is spoken in this audio. If there is only silence, background noise, or no clear speech, reply with literally just: SILENCE";
 
-// 1. Speak text out loud using Windows female TTS voice
+// 1. Speak using Windows TTS, preferring a female voice when installed.
 function speak(text) {
   return new Promise((resolve) => {
-    const cleanText = text.replace(/[*_#`]/g, "").replace(/'/g, "''");
+    const cleanText = text.replace(/[*_#`]/g, "");
+    const encodedText = Buffer.from(cleanText, "utf8").toString("base64");
     const ps = `
             Add-Type -AssemblyName System.Speech;
+            $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedText}'));
             $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer;
-            $synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female);
+            $femaleVoice = $synth.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Gender -eq [System.Speech.Synthesis.VoiceGender]::Female } | Select-Object -First 1;
+            if ($femaleVoice) { $synth.SelectVoice($femaleVoice.VoiceInfo.Name); }
             $synth.Rate = 1;
-            $synth.Speak('${cleanText}');
+            $synth.Speak($text);
         `.replace(/\n/g, " ");
 
-    exec(`powershell -NoProfile -Command "${ps}"`, () => resolve());
+    execFile("powershell.exe", ["-NoProfile", "-Command", ps], { windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        console.error("\n[TTS Error]:", stderr.trim() || error.message);
+      }
+      resolve();
+    });
   });
 }
 
-// 2. Record 4 seconds of microphone audio using WinMM
-function recordAudio(seconds = 4) {
-  return new Promise((resolve) => {
+// 2. Record a short microphone clip.
+function recordAudio() {
+  return new Promise((resolve, reject) => {
     if (fs.existsSync(TEMP_AUDIO)) fs.unlinkSync(TEMP_AUDIO);
 
-    const ps = `
-            Add-Type -TypeDefinition '
-                using System;
-                using System.Runtime.InteropServices;
-                using System.Text;
-                public class WinMM {
-                    [DllImport("winmm.dll", CharSet = CharSet.Ansi)]
-                    public static extern int mciSendString(string command, StringBuilder returnString, int returnLength, IntPtr hwndCallback);
-                }
-            ';
-            [WinMM]::mciSendString("open new Type waveaudio Alias r", $null, 0, [IntPtr]::Zero);
-            [WinMM]::mciSendString("record r", $null, 0, [IntPtr]::Zero);
-            Start-Sleep -Seconds ${seconds};
-            [WinMM]::mciSendString("save r \\"${TEMP_AUDIO.replace(/\\/g, "\\\\")}\\"", $null, 0, [IntPtr]::Zero);
-            [WinMM]::mciSendString("close r", $null, 0, [IntPtr]::Zero);
-        `.replace(/\n/g, " ");
+    execFile("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", REC_SCRIPT, "-OutFile", TEMP_AUDIO], { cwd: __dirname, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr.trim() || stdout.trim() || error.message));
+        return;
+      }
 
-    exec(`powershell -NoProfile -Command "${ps}"`, () => {
-      resolve(fs.existsSync(TEMP_AUDIO));
+      try {
+        const { size } = fs.statSync(TEMP_AUDIO);
+        if (size <= 44) {
+          reject(new Error("The microphone recording is missing or empty."));
+          return;
+        }
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
     });
   });
 }
 
-// 3. Listen & Transcribe using Gemini's audio model
+async function transcribe(audioBytes) {
+  const contents = [{ text: TRANSCRIPTION_PROMPT }, { inlineData: { mimeType: "audio/wav", data: audioBytes } }];
+
+  return ai.models.generateContent({
+    model: "gemini-3.5-flash-lite",
+    contents,
+    config: { temperature: 0.0 },
+  });
+}
+
+// 3. Transcribe the recorded clip.
 async function listen() {
-  process.stdout.write("."); // Prints a dot so you know she's listening
-  const recorded = await recordAudio(4);
-  if (!recorded) return "";
+  process.stdout.write(".");
 
   try {
+    await recordAudio();
     const audioBytes = fs.readFileSync(TEMP_AUDIO).toString("base64");
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        { text: "Transcribe exactly what is spoken in this audio. If there is only silence, background noise, or no clear speech, reply with literally just: SILENCE" },
-        { inlineData: { mimeType: "audio/wav", data: audioBytes } },
-      ],
-      config: { temperature: 0.0 },
-    });
+    const response = await transcribe(audioBytes);
 
     const transcript = response.text ? response.text.trim() : "";
-    if (!transcript || transcript.toUpperCase().includes("SILENCE")) {
+    if (!transcript) {
+      console.log("\n[Mic] No transcript returned for this clip.");
+      return "";
+    }
+    if (transcript.toUpperCase() === "SILENCE") {
+      console.log("\n[Mic] No speech detected in this clip.");
       return "";
     }
 
     console.log(`\n[Mic Debug] Heard: "${transcript}"`);
     return transcript;
   } catch (err) {
+    console.error("\n[Voice Error]:", err.message);
     return "";
   }
 }

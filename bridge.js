@@ -37,22 +37,6 @@ async function searchFiles(base_path, search_term) {
         });
     });
 }
-async function test() {
-    try {
-        console.log("Searching...");
-        const matches = await searchFiles('.', 'nirfaa');
-        console.log("Found files:", matches);
-
-        if (matches.length > 0) {
-            console.log("Opening first match...");
-            const output = await open_target(matches[0]);
-            console.log(output);
-        }
-    } catch (err) {
-        console.error("Error:", err);
-    }
-}
-test();
 module.exports = {
     open_target,
     searchFiles

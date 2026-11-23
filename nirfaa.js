@@ -66,7 +66,7 @@ const tools = [
   },
 ];
 const chat = ai.chats.create({
-  model: "gemini-3.6-flash", //
+  model: "gemini-3.5-flash-lite",
   config: {
     systemInstruction: `
             You are Nirfaa, a loyal, witty, and sharp personal AI assistant living inside the user's laptop.
