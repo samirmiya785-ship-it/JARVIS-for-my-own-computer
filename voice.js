@@ -8,10 +8,12 @@ if (!process.env.GEMINI_API_KEY) {
   throw new Error("GEMINI_API_KEY is missing. Add it to the .env file.");
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: { apiVersion: "v1beta" },
+});
 const TEMP_AUDIO = path.join(__dirname, "input.wav");
 const REC_SCRIPT = path.join(__dirname, "test.ps1");
-const TRANSCRIPTION_PROMPT = "Transcribe exactly what is spoken in this audio. If there is only silence, background noise, or no clear speech, reply with literally just: SILENCE";
 
 // 1. Speak using Windows TTS, preferring a female voice when installed.
 function speak(text) {
@@ -63,13 +65,17 @@ function recordAudio() {
 }
 
 async function transcribe(audioBytes) {
-  const contents = [{ text: TRANSCRIPTION_PROMPT }, { inlineData: { mimeType: "audio/wav", data: audioBytes } }];
-
-  return ai.models.generateContent({
-    model: "gemini-3.5-flash-lite",
-    contents,
-    config: { temperature: 0.0 },
+  const response = await ai.interactions.create({
+    model: "gemini-3.5-transcribe",
+    input: [{ type: "audio", data: audioBytes, mime_type: "audio/wav" }],
+    generation_config: {
+      transcription_config: {
+        custom_vocabulary: ["Nirfaa"],
+      },
+    },
   });
+
+  return response.output_text ? response.output_text.trim() : "";
 }
 
 // 3. Transcribe the recorded clip.
@@ -79,9 +85,7 @@ async function listen() {
   try {
     await recordAudio();
     const audioBytes = fs.readFileSync(TEMP_AUDIO).toString("base64");
-    const response = await transcribe(audioBytes);
-
-    const transcript = response.text ? response.text.trim() : "";
+    const transcript = await transcribe(audioBytes);
     if (!transcript) {
       console.log("\n[Mic] No transcript returned for this clip.");
       return "";
